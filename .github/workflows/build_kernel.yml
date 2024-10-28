@@ -75,16 +75,15 @@ jobs:
          
          export PATH="${clang_dir}/bin:$PATH"
         
-         compile() {
-           cd "${{ github.workspace }}/kernel/oneplus/sm7675"
            
          make_defconfig() {
+           cd "${{ github.workspace }}/kernel/oneplus/sm7675"
            start=$(date +"%s")
            make -s ARCH=${arch} O=${objdir} ${{ github.event.inputs.CONFIG_FILE }} -j$(nproc --all)
            }
            
          
-           
+         compile() {
            make -j$(nproc --all) \
            O=out \
            ARCH=${arch} \
