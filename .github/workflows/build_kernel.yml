@@ -47,11 +47,11 @@ jobs:
           sudo apt-get install -y zip unzip tar gzip bzip2 rar unrar cpio jq
           
       - name: Cloning Kernel Source
-        run: git clone --single-branch --depth=1 --no-tags ${{ github.event.inputs.KERNEL_SOURCE }} -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.workspace }}/kernel/oneplus/sm7675
-      - name: clone 
-        run: | 
-         git clone https://github.com/OnePlus-Nord4-devs/android_kernel_modules_and_devicetree_oneplus_sm7675.git ${{ github.workspace }}/ker
-         mv ker/* kernel
+        run : 
+          git clone https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm7675.git -b oneplus/sm7675_u_14.1.0_oneplus_nord4 ${{ github.workspace }}/kernel_workspace
+          cd ${{ github.workspace }}/kernel_workspace
+          cd kernel_platform
+        run: git clone --single-branch --depth=1 --no-tags ${{ github.event.inputs.KERNEL_SOURCE }} -b ${{ github.event.inputs.KERNEL_BRANCH }} sm7675
 
       - name: Cloning Toolchain
         run: git clone --single-branch --depth=1 --no-tags ${{ github.event.inputs.TOOLCHAIN_URL }} ${{ github.workspace }}/toolchain
@@ -61,7 +61,7 @@ jobs:
         id: cache-out
         uses: actions/cache@v4
         with:
-         path: ${{ github.workspace }}/kernel/oneplus/sm7675/out
+         path: ${{ github.workspace }}/kernel_workspace/kernel_platform/sm7675/out
          key: ${{ github.event.inputs.KERNEL_SOURCE }}-out-
 
       - name: Start Compilation
