@@ -3,14 +3,6 @@ name: Build Kernel
 on:
   workflow_dispatch:
     inputs:
-      KERNEL_SOURCE:
-        description: 'Kernel source URL'
-        required: true
-        default: 'https://github.com/OnePlus-Nord4-devs/android_kernel_oneplus_sm7675.git'
-      KERNEL_BRANCH:
-        description: 'Kernel branch'
-        required: true
-        default: 'avalon'
       KERNEL_NAME:
         description: 'Kernel/zip name'
         required: true
@@ -38,120 +30,94 @@ jobs:
         working-directory: ${{ github.workspace }}
 
     steps:
-      - name: Set-up environment
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install repo tool & sync manifest
         run: |
-          rm -rf ${{ github.workspace }}/*
+          curl https://storage.googleapis.com/git-repo-downloads/repo > repo
+          chmod a+x repo
+          # Initialize from local manifest
+          ./repo init -u file://${{ github.workspace }} -m xyz.xml
+          ./repo sync --no-tags --jobs=$(nproc)
+
+      - name: Set up build environment
+        run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev
-          sudo apt-get install -y curl git ftp lftp wget libarchive-tools ccache python2 python2-dev
-          sudo apt-get install -y zip unzip tar gzip bzip2 rar unrar cpio jq
+          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev \
+                                   curl git ftp lftp wget libarchive-tools ccache python2 python2-dev \
+                                   zip unzip tar gzip bzip2 rar unrar cpio jq
 
-      - name: Cloning Kernel Source
+      - name: Clone toolchain
         run: |
-          git clone https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm7675.git -b oneplus/sm7675_u_14.1.0_oneplus_nord4 ${{ github.workspace }}/kernel_workspace
-          cd ${{ github.workspace }}/kernel_workspace
-          cd kernel_platform
-          git clone --single-branch --depth=1 --no-tags ${{ github.event.inputs.KERNEL_SOURCE }} -b ${{ github.event.inputs.KERNEL_BRANCH }} sm7675
+          git clone --single-branch --depth=1 --no-tags ${{ github.event.inputs.TOOLCHAIN_URL }} toolchain
 
-      - name: Cloning Toolchain
-        run: |
-          git clone --single-branch --depth=1 --no-tags ${{ github.event.inputs.TOOLCHAIN_URL }} ${{ github.workspace }}/toolchain
-
-      - name: Set-up Cache
+      - name: Configure cache for object files
         id: cache-out
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/kernel_workspace/kernel_platform/sm7675/out
-          key: ${{ github.event.inputs.KERNEL_SOURCE }}-out-
+          path: out
+          key: kernel‑out‑${{ runner.os }}‑${{ github.sha }}
 
-      - name: Start Compilation
+      - name: Start compilation
         run: |
-          objdir="${{ github.workspace }}/kernel_workspace/kernel_platform/sm7675/out"
-          anykernel="${{ github.workspace }}/anykernel"
-          clang_dir="${{ github.workspace }}/toolchain"
-          kernel_name="${{ github.event.inputs.KERNEL_NAME }}"
-          zip_name="${kernel_name}-$(date +"%d-%m-%Y-%H%M").zip"
-          arch="arm64"
-          export PATH="${clang_dir}/bin:$PATH"
+          export PATH="$PWD/toolchain/bin:$PATH"
+          OBJDIR="$PWD/out"
+          ANYKERNEL_DIR="$PWD/anykernel"
+          ZIP_BASE="${{ github.event.inputs.KERNEL_NAME }}"
+          ZIP_NAME="$ZIP_BASE-$(date +'%d-%m-%Y-%H%M').zip"
+          ARCH=arm64
 
-          make_defconfig() {
-            cd "${{ github.workspace }}/kernel_workspace/kernel_platform/sm7675"
-            start=$(date +"%s")
-            make -s ARCH=${arch} O=${objdir} ${{ github.event.inputs.CONFIG_FILE }} -j$(nproc --all)
+          build_defconfig() {
+            cd kernel/msm-5.4
+            START=$(date +%s)
+            make -s O="$OBJDIR" ARCH=$ARCH ${{ github.event.inputs.CONFIG_FILE }} -j$(nproc)
           }
 
-          compile() {
-            make -j$(nproc --all) \
-              O=out \
-              ARCH=${arch} \
+          compile_kernel() {
+            cd kernel/msm-5.4
+            make \
+              O="$OBJDIR" ARCH=$ARCH \
               CC=clang \
               CROSS_COMPILE=aarch64-linux-gnu- \
               CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-              CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-              AR=llvm-ar \
-              LLVM_NM=llvm-nm \
-              OBJCOPY=llvm-objcopy \
-              LD=ld.lld \
-              NM=llvm-nm \
-              LLVM=1 \
-              LLVM_IAS=1
+              AR=llvm-ar LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy \
+              LLVM=1 LLVM_IAS=1 \
+              -j$(nproc)
           }
 
-          completion() {
-            cd "${objdir}"
-            compiled_image="arch/arm64/boot/Image"
-            compiled_dtbo="arch/arm64/boot/dtbo.img"
-            qcom_dtb="arch/arm64/boot/dts/vendor/qcom"
-
-            if [[ -f ${compiled_image} && -f ${compiled_dtbo} ]]; then
-              git clone -q ${{ github.event.inputs.ANYKERNEL }} "$anykernel"
-              cp "${compiled_image}" "${{ github.workspace }}"
-              cp "${compiled_dtbo}" "${{ github.workspace }}"
-
-              if ls ${qcom_dtb}/*.dtb 1> /dev/null 2>&1; then
-                cp ${qcom_dtb}/*.dtb "${{ github.workspace }}"
-              fi
-
-              mv -f "${compiled_image}" "$anykernel/Image"
-              mv -f "${compiled_dtbo}" "$anykernel/dtbo.img"
-              cd "$anykernel"
+          pack_anykernel() {
+            cd "$OBJDIR"
+            if [[ -f arch/arm64/boot/Image && -f arch/arm64/boot/dtbo.img ]]; then
+              git clone -q ${{ github.event.inputs.ANYKERNEL }} "$ANYKERNEL_DIR"
+              cp arch/arm64/boot/Image  arch/arm64/boot/dtbo.img "$ANYKERNEL_DIR"
+              cd "$ANYKERNEL_DIR"
               zip -r AnyKernel.zip *
-              mv -- "AnyKernel.zip" "$zip_name"
-              mv -- "$anykernel/$zip_name" "${{ github.workspace }}/$zip_name"
-              rm -rf "$anykernel"
-              end=$(date +"%s")
-              diff=$((end - start))
-              echo -e "BUILD COMPLETED IN ${diff} SECONDS"
+              mv AnyKernel.zip "$ZIP_NAME"
+              mv "$ZIP_NAME" "$PWD/../.."
+              END=$(date +%s)
+              echo "BUILD COMPLETED IN $((END-START)) SECONDS"
             else
-              echo "ERROR: Kernel compilation failed!"
+              echo "ERROR: Kernel build failed!" >&2
               exit 1
             fi
           }
 
-          make_defconfig
-          compile
-          completion
+          build_defconfig
+          compile_kernel
+          pack_anykernel
 
-          cd "${{ github.workspace }}"
-
-          # Set-up file info
-          zip_file=$(find . -name '${{ github.event.inputs.KERNEL_NAME }}*.zip' -print -quit)
-          echo "ZIP_FILE=$zip_file" >> $GITHUB_ENV
-          echo "ZIP_NAME=$(basename "$zip_file" .zip)" >> $GITHUB_ENV
+          # Persist outputs
+          echo "ZIP_FILE=$(pwd)/$ZIP_NAME" >> $GITHUB_ENV
+          echo "ZIP_NAME=${ZIP_NAME%.zip}"       >> $GITHUB_ENV
           echo "RELEASE_DATE=$(date +'%B %-d, %Y %H:%M')" >> $GITHUB_ENV
-          echo "DTBO=${{ github.workspace }}/dtbo.img" >> $GITHUB_ENV
-          echo "IMAGE=${{ github.workspace }}/Image" >> $GITHUB_ENV
 
-      - name: Upload files to repository releases page
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ${{ github.workspace }}/*.dtb
             ${{ env.ZIP_FILE }}
-            ${{ env.DTBO }}
-            ${{ env.IMAGE }}
           name: ${{ env.ZIP_NAME }}
           tag_name: ${{ github.run_id }}
           body: |
             Released on ${{ env.RELEASE_DATE }}
-            
