@@ -35,8 +35,8 @@ jobs:
 
       - name: Install repo tool
         run: |
-          curl https://storage.googleapis.com/git-repo-downloads/repo > repo
-          chmod +x repo
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
 
       - name: Init & sync manifest from kernel_manifes.git
         run: |
