@@ -3,25 +3,29 @@ name: Build Kernel
 on:
   workflow_dispatch:
     inputs:
+      MANIFEST_URL:
+        description: 'Raw URL to your manifest XML (e.g. https://raw.githubusercontent.com/you/yourrepo/main/xyz.xml)'
+        required: true
+        default: 'https://raw.githubusercontent.com/you/yourrepo/main/xyz.xml'
       KERNEL_NAME:
-        description: 'Kernel/zip name'
+        description: 'Kernel/zip base name'
         required: true
         default: 'perf'
       CONFIG_FILE:
-        description: 'Config file (You can put multiple configs separated by space)'
+        description: 'Config file (space‑separated if multiple)'
         required: true
-        default: 'vendor/avalon_defconfig'
+        default: 'gki_defconfig'
       TOOLCHAIN_URL:
-        description: "Clone URL of your toolchain including branch"
+        description: 'Toolchain repo URL (with branch if needed)'
         required: true
         default: 'https://gitlab.com/dogpoopy/clang-r522817.git -b main'
       ANYKERNEL:
-        description: "Clone URL of your AnyKernel including branch"
+        description: 'AnyKernel3 repo URL (with branch if needed)'
         required: true
         default: 'https://github.com/aosp-realm/AnyKernel3.git -b master'
 
 jobs:
-  Kernel:
+  build:
     runs-on: ubuntu-latest
     permissions: write-all
     defaults:
@@ -30,84 +34,74 @@ jobs:
         working-directory: ${{ github.workspace }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout actions metadata
         uses: actions/checkout@v3
 
-      - name: Install repo tool & sync manifest
+      - name: Install repo tool
         run: |
           curl https://storage.googleapis.com/git-repo-downloads/repo > repo
-          chmod a+x repo
-          # Initialize from local manifest
-          ./repo init -u file://${{ github.workspace }} -m xyz.xml
+          chmod +x repo
+
+      - name: Init & sync manifest
+        run: |
+          ./repo init -u "${{ github.event.inputs.MANIFEST_URL }}"
           ./repo sync --no-tags --jobs=$(nproc)
 
-      - name: Set up build environment
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev \
-                                   curl git ftp lftp wget libarchive-tools ccache python2 python2-dev \
-                                   zip unzip tar gzip bzip2 rar unrar cpio jq
+          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            libssl-dev libfl-dev curl git ftp lftp wget libarchive-tools ccache python2 python2-dev \
+            zip unzip tar gzip bzip2 rar unrar cpio jq
 
       - name: Clone toolchain
         run: |
           git clone --single-branch --depth=1 --no-tags ${{ github.event.inputs.TOOLCHAIN_URL }} toolchain
 
-      - name: Configure cache for object files
-        id: cache-out
+      - name: Configure object cache
+        id: cache
         uses: actions/cache@v4
         with:
           path: out
-          key: kernel‑out‑${{ runner.os }}‑${{ github.sha }}
+          key: kernel-out-${{ runner.os }}-${{ github.sha }}
 
-      - name: Start compilation
+      - name: Build kernel & package
         run: |
           export PATH="$PWD/toolchain/bin:$PATH"
           OBJDIR="$PWD/out"
           ANYKERNEL_DIR="$PWD/anykernel"
-          ZIP_BASE="${{ github.event.inputs.KERNEL_NAME }}"
-          ZIP_NAME="$ZIP_BASE-$(date +'%d-%m-%Y-%H%M').zip"
+          BASE="${{ github.event.inputs.KERNEL_NAME }}"
+          ZIP_NAME="$BASE-$(date +'%d-%m-%Y-%H%M').zip"
           ARCH=arm64
 
-          build_defconfig() {
-            cd kernel/msm-5.4
-            START=$(date +%s)
-            make -s O="$OBJDIR" ARCH=$ARCH ${{ github.event.inputs.CONFIG_FILE }} -j$(nproc)
-          }
+          # 1) defconfig
+          cd kernel/msm-5.4
+          START=$(date +%s)
+          make -s O="$OBJDIR" ARCH=$ARCH ${{ github.event.inputs.CONFIG_FILE }} -j$(nproc)
 
-          compile_kernel() {
-            cd kernel/msm-5.4
-            make \
-              O="$OBJDIR" ARCH=$ARCH \
-              CC=clang \
-              CROSS_COMPILE=aarch64-linux-gnu- \
-              CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-              AR=llvm-ar LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy \
-              LLVM=1 LLVM_IAS=1 \
-              -j$(nproc)
-          }
+          # 2) compile
+          make O="$OBJDIR" ARCH=$ARCH \
+              CC=clang CROSS_COMPILE=aarch64-linux-gnu- \
+              CROSS_COMPILE_ARM32=arm-linux-gnueabi- AR=llvm-ar \
+              LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy LLVM=1 \
+              LLVM_IAS=1 -j$(nproc)
 
-          pack_anykernel() {
-            cd "$OBJDIR"
-            if [[ -f arch/arm64/boot/Image && -f arch/arm64/boot/dtbo.img ]]; then
-              git clone -q ${{ github.event.inputs.ANYKERNEL }} "$ANYKERNEL_DIR"
-              cp arch/arm64/boot/Image  arch/arm64/boot/dtbo.img "$ANYKERNEL_DIR"
-              cd "$ANYKERNEL_DIR"
-              zip -r AnyKernel.zip *
-              mv AnyKernel.zip "$ZIP_NAME"
-              mv "$ZIP_NAME" "$PWD/../.."
-              END=$(date +%s)
-              echo "BUILD COMPLETED IN $((END-START)) SECONDS"
-            else
-              echo "ERROR: Kernel build failed!" >&2
-              exit 1
-            fi
-          }
+          # 3) anykernel packaging
+          cd "$OBJDIR"
+          if [[ -f arch/arm64/boot/Image && -f arch/arm64/boot/dtbo.img ]]; then
+            git clone -q "${{ github.event.inputs.ANYKERNEL }}" "$ANYKERNEL_DIR"
+            cp arch/arm64/boot/Image arch/arm64/boot/dtbo.img "$ANYKERNEL_DIR"
+            cd "$ANYKERNEL_DIR"
+            zip -r AnyKernel.zip *
+            mv AnyKernel.zip "$ZIP_NAME"
+            mv "$ZIP_NAME" "$PWD/../.."
+            echo "BUILD COMPLETE in $(( $(date +%s) - START )) sec"
+          else
+            echo "ERROR: build artifacts missing" >&2
+            exit 1
+          fi
 
-          build_defconfig
-          compile_kernel
-          pack_anykernel
-
-          # Persist outputs
+          # export for release step
           echo "ZIP_FILE=$(pwd)/$ZIP_NAME" >> $GITHUB_ENV
           echo "ZIP_NAME=${ZIP_NAME%.zip}"       >> $GITHUB_ENV
           echo "RELEASE_DATE=$(date +'%B %-d, %Y %H:%M')" >> $GITHUB_ENV
@@ -115,8 +109,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            ${{ env.ZIP_FILE }}
+          files: ${{ env.ZIP_FILE }}
           name: ${{ env.ZIP_NAME }}
           tag_name: ${{ github.run_id }}
           body: |
