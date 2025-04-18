@@ -3,10 +3,6 @@ name: Build Kernel
 on:
   workflow_dispatch:
     inputs:
-      MANIFEST_URL:
-        description: 'Raw URL to your manifest XML (e.g. https://raw.githubusercontent.com/you/yourrepo/main/xyz.xml)'
-        required: true
-        default: 'https://raw.githubusercontent.com/you/yourrepo/main/xyz.xml'
       KERNEL_NAME:
         description: 'Kernel/zip base name'
         required: true
@@ -14,7 +10,7 @@ on:
       CONFIG_FILE:
         description: 'Config file (space‑separated if multiple)'
         required: true
-        default: 'gki_defconfig'
+        default: 'vendor/avalon_defconfig'
       TOOLCHAIN_URL:
         description: 'Toolchain repo URL (with branch if needed)'
         required: true
@@ -34,7 +30,7 @@ jobs:
         working-directory: ${{ github.workspace }}
 
     steps:
-      - name: Checkout actions metadata
+      - name: Checkout this repo
         uses: actions/checkout@v3
 
       - name: Install repo tool
@@ -42,30 +38,35 @@ jobs:
           curl https://storage.googleapis.com/git-repo-downloads/repo > repo
           chmod +x repo
 
-      - name: Init & sync manifest
+      - name: Init & sync manifest from kernel_manifes.git
         run: |
-          ./repo init -u "${{ github.event.inputs.MANIFEST_URL }}"
+          ./repo init \
+            -u https://github.com/phhgsi/kernel_manifes.git \
+            -b main \
+            -m xyz.xml
           ./repo sync --no-tags --jobs=$(nproc)
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            libssl-dev libfl-dev curl git ftp lftp wget libarchive-tools ccache python2 python2-dev \
-            zip unzip tar gzip bzip2 rar unrar cpio jq
+          sudo apt-get install -y \
+            build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            libssl-dev libfl-dev curl git ftp lftp wget libarchive-tools \
+            ccache python2 python2-dev zip unzip tar gzip bzip2 rar unrar \
+            cpio jq
 
       - name: Clone toolchain
         run: |
-          git clone --single-branch --depth=1 --no-tags ${{ github.event.inputs.TOOLCHAIN_URL }} toolchain
+          git clone --single-branch --depth=1 --no-tags "${{ github.event.inputs.TOOLCHAIN_URL }}" toolchain
 
-      - name: Configure object cache
+      - name: Restore build cache
         id: cache
         uses: actions/cache@v4
         with:
           path: out
           key: kernel-out-${{ runner.os }}-${{ github.sha }}
 
-      - name: Build kernel & package
+      - name: Build & package kernel
         run: |
           export PATH="$PWD/toolchain/bin:$PATH"
           OBJDIR="$PWD/out"
@@ -74,19 +75,15 @@ jobs:
           ZIP_NAME="$BASE-$(date +'%d-%m-%Y-%H%M').zip"
           ARCH=arm64
 
-          # 1) defconfig
           cd kernel/msm-5.4
           START=$(date +%s)
           make -s O="$OBJDIR" ARCH=$ARCH ${{ github.event.inputs.CONFIG_FILE }} -j$(nproc)
-
-          # 2) compile
           make O="$OBJDIR" ARCH=$ARCH \
-              CC=clang CROSS_COMPILE=aarch64-linux-gnu- \
-              CROSS_COMPILE_ARM32=arm-linux-gnueabi- AR=llvm-ar \
-              LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy LLVM=1 \
-              LLVM_IAS=1 -j$(nproc)
+               CC=clang CROSS_COMPILE=aarch64-linux-gnu- \
+               CROSS_COMPILE_ARM32=arm-linux-gnueabi- AR=llvm-ar \
+               LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy LLVM=1 \
+               LLVM_IAS=1 -j$(nproc)
 
-          # 3) anykernel packaging
           cd "$OBJDIR"
           if [[ -f arch/arm64/boot/Image && -f arch/arm64/boot/dtbo.img ]]; then
             git clone -q "${{ github.event.inputs.ANYKERNEL }}" "$ANYKERNEL_DIR"
@@ -95,22 +92,4 @@ jobs:
             zip -r AnyKernel.zip *
             mv AnyKernel.zip "$ZIP_NAME"
             mv "$ZIP_NAME" "$PWD/../.."
-            echo "BUILD COMPLETE in $(( $(date +%s) - START )) sec"
-          else
-            echo "ERROR: build artifacts missing" >&2
-            exit 1
-          fi
-
-          # export for release step
-          echo "ZIP_FILE=$(pwd)/$ZIP_NAME" >> $GITHUB_ENV
-          echo "ZIP_NAME=${ZIP_NAME%.zip}"       >> $GITHUB_ENV
-          echo "RELEASE_DATE=$(date +'%B %-d, %Y %H:%M')" >> $GITHUB_ENV
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ${{ env.ZIP_FILE }}
-          name: ${{ env.ZIP_NAME }}
-          tag_name: ${{ github.run_id }}
-          body: |
-            Released on ${{ env.RELEASE_DATE }}
+            echo "BUILD COMPLETE in $(( $(date +%
