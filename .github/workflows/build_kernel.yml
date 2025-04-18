@@ -33,18 +33,9 @@ jobs:
       - name: Checkout this repo
         uses: actions/checkout@v3
 
-      - name: Install repo tool
-        run: |
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          export PATH=~/bin:$PATH
-
-      - name: Init & sync manifest from kernel_manifes.git
-        run: |
-          git clone https://github.com/phhgsi/kernel_manifes.git kernel_manifest
-          cd kernel_manifest
-          repo sync
+      
+      
+          
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -53,6 +44,16 @@ jobs:
             libssl-dev libfl-dev curl git ftp lftp wget libarchive-tools \
             ccache python2 python2-dev zip unzip tar gzip bzip2 rar unrar \
             cpio jq
+      
+      - name: Install repo tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          export PATH=~/bin:$PATH
+          git clone https://github.com/phhgsi/kernel_manifes.git kernel_manifest
+          cd kernel_manifest
+          repo sync
 
       - name: Clone toolchain
         run: |
