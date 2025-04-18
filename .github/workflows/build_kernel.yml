@@ -40,12 +40,9 @@ jobs:
 
       - name: Init & sync manifest from kernel_manifes.git
         run: |
-          ./repo init \
-            -u https://github.com/phhgsi/kernel_manifes.git \
-            -b main \
-            -m xyz.xml
-          ./repo sync --no-tags --jobs=$(nproc)
-
+          git clone https://github.com/phhgsi/kernel_manifes.git kernel_manifest
+          cd kernel_manifest
+          repo sync
       - name: Install build dependencies
         run: |
           sudo apt-get update
