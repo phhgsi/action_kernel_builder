@@ -51,7 +51,7 @@ jobs:
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           export PATH=~/bin:$PATH
-          repo init https://github.com/phhgsi/kernel_manifes.git kernel_manifest -b main
+          repo init -u https://github.com/phhgsi/kernel_manifes.git kernel_manifest -b main
           cd kernel_manifest
           repo sync
 
