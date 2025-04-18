@@ -42,7 +42,7 @@ jobs:
           sudo apt-get install -y \
             build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
             libssl-dev libfl-dev curl git ftp lftp wget libarchive-tools \
-            ccache python zip unzip tar gzip bzip2 rar unrar \
+            ccache python3 zip unzip tar gzip bzip2 rar unrar \
             cpio jq
       
       - name: Install repo tool
